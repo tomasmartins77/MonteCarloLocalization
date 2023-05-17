@@ -10,7 +10,7 @@ from bagpy import bagreader
 from nav_msgs.msg import OccupancyGrid
 from nav_msgs.msg import Odometry  
 from geometry_msgs.msg import PoseStamped    
-import pandas as pd
+import pandas as pd                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -21,17 +21,17 @@ class Particula:
         self.theta = theta
         self.qz = [0] * numeroParticulas
         self.qw = [0] * numeroParticulas
-    
-    def prediction(self, v, omega, dt):
-
-        self.x = self.x + v * np.cos(self.theta) * dt
-        self.y = self.y + v * np.sin(self.theta) * dt
-        self.theta = self.theta + omega * dt
         for i in range(len(self.theta)):
             ([_, _, self.qz[i], self.qw[i]]) = tf.transformations.quaternion_from_euler(0, 0, self.theta[i])
+    
+    def prediction(self, v, omega, dt):
+        if(v >= 0.001 or omega>= 0.01):
+            self.x = self.x + v * np.cos(self.theta) * dt + np.random.normal(0,0.0001,len(self.x))
+            self.y = self.y + v * np.sin(self.theta) * dt + np.random.normal(0,0.0001,len(self.y))
+            self.theta = self.theta + omega * dt + np.random.normal(0,0.0001,len(self.theta))
+            for i in range(len(self.theta)):
+                ([_, _, self.qz[i], self.qw[i]]) = tf.transformations.quaternion_from_euler(0, 0, self.theta[i])
         
-
-            
     
     def update(self):
         print('to do')
@@ -41,7 +41,7 @@ class Particula:
         free_space_indices = np.where(self.map_data == 0)
         free_space_indices = np.column_stack(free_space_indices)
         for i in range(numeroParticulas):
-            rand_index = random.choice(range(len(free_space_indices)))
+            rand_index = random.choice(range(len(free_space_indices)))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
             x = free_space_indices[rand_index][0]
             y = free_space_indices[rand_index][1]
             theta = random.uniform(-np.pi, np.pi)
@@ -67,7 +67,7 @@ class mcl():
         self.arraymap = []
         self.MkArray = MarkerArray()
         self.resolution = 0.0500000
-        self.numero_particulas = 5000
+        self.numero_particulas = 100
         self.position_particula=[]
         self.tamanho_livre = None
 
@@ -86,9 +86,52 @@ class mcl():
         
     def scan_callback(self,msg):
         self.scan = msg.ranges
+        self.max_range = msg.range_max
+        self.min_range = msg.range_min
+        self.max_angle = msg.angle_max
+        self.min_angle = msg.angle_min
+
+        N = len(self.scan)
+        self.angles = [(self.max_angle-self.min_angle)*float(i)/N + self.min_angle for i in range(N)]
+
+        self.real_ranges = []
+        for i in self.scan:
+            if i >= self.min_range and i <= self.max_range:
+                self.real_ranges.append(i)
+            if i < self.min_range:
+                self.real_ranges.append(self.min_range)
+            if i > self.max_range:
+                self.real_ranges.append(self.max_range)
+
+
+        self.ranges = []
+        for angle in self.angles:
+            phi = self.theta + angle
+
+            r = self.min_range
+            while r <= self.max_range:
+                xm = self.x + r*np.cos(phi)
+                ym = self.y + r*np.sin(phi)
+
+
+                row = self.conversao_pixeis(xm)
+                col = self.conversao_pixeis(ym)
+                if self.map_data[col][row] == 100 or self.map_data[col][row]:
+                    break
+                r += self.resolution
+
+            self.ranges.append(r)
+            print(self.ranges)
+        
+            
+
+        
 
     def conversao_metros(self,x):
         return (x)*self.resolution+self.origin_x
+    
+    def conversao_pixeis(self,x):
+        return round((x-self.origin_x)/self.resolution)
         
     
     def espaco_livre(self):
@@ -101,6 +144,13 @@ class mcl():
         for i in x:
             self.position_particula.append(self.arraymap[i])
         self.position_particula=np.array(self.position_particula)
+
+    """ def espaco_livre(self):
+        map_data = np.array(self.map_data)
+        free_space_indices = np.argwhere(map_data == 0)
+        self.tamanho_livre = len(free_space_indices)
+        random_indices = np.random.choice(self.tamanho_livre, size=self.numero_particulas, replace=True)
+        self.position_particula = free_space_indices[random_indices] """
 
     def map_callback(self, msg):
         # Convert the 1D array to a 2D numpy array
@@ -122,7 +172,7 @@ class mcl():
             for i in range(len(self.particles.x)):
                 msg = Marker()
                 msg.action = msg.ADD
-                msg.type = msg.SPHERE
+                msg.type = msg.ARROW
                 msg.id = i;
                 msg.pose.position.x = self.particles.x[i]
                 msg.pose.position.y = self.particles.y[i]
@@ -132,12 +182,12 @@ class mcl():
                 msg.color.r = 0.0
                 msg.color.g = 1.0
                 msg.color.b = 0.0
-                #msg.scale.x = 0.25
-                #msg.scale.y = 0.05
-                #msg.scale.z = 0.05
-                msg.scale.x = 0.02
-                msg.scale.y = 0.02
-                msg.scale.z = 0.02
+                msg.scale.x = 0.25
+                msg.scale.y = 0.05
+                msg.scale.z = 0.05
+                #msg.scale.x = 0.02
+                #msg.scale.y = 0.02
+                #msg.scale.z = 0.02
                 msg.header.stamp = rospy.Time.now() 
                 msg.header.frame_id = "base_footprint"
                 if(i>self.numero_particulas):
