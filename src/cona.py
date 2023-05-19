@@ -76,6 +76,11 @@ class ParticleFilter(object):
 
     def conversao_metros(self,x):
         return (x)*self.resolution+self.origin[0]
+    
+
+    def conversao_pixeis(self,x):
+        return (x-self.origin[0])/self.resolution
+    
 
     def espaco_livre(self):
         arraymap = []
@@ -100,18 +105,99 @@ class ParticleFilter(object):
             particle.y = particle.y + v * np.sin(particle.theta) * dt
             particle.theta = particle.theta + omega * dt
 
+
+    def handle_observation(self, laser_scan):
+        """Does prediction, weight update, and resampling."""
+        errors = []
+        #self.weights = [0] * len(self.particles)
+        for particle in self.particles:
+            #for each particle, compute the laser scan difference
+            error = self.get_prediction_error_squared(laser_scan, particle)
+            #sig_error = self.sigmoid(error)
+            errors.append(error)
+            #self.weights.append(exp(-error))
+
+        self.weights = [exp(-error) for error in errors]
+        weight_sum = sum(self.weights)
+        N_eff = 0
+     
+        new_particles = []
+        self.resample(new_particles)
+
+        # approach 2: calculate the effective sample size by weight
+        sig_weight = [self.sigmoid(error) for error in errors]
+        N_eff_weight = sum([1 / (weight ** 2) for weight in sig_weight])
+        #print "N_eff_weight", N_eff_weight
+
+        N_eff = N_eff_weight
+   
+        if N_eff > 50:
+            self.particles = new_particles
+
+
+    def get_prediction_error_squared(self, laser_scan_msg, particle):
+        # If the particle falls inside an obstacle
+        # give it a large error
+        row = self.conversao_pixeis(particle.x)
+        col = self.conversao_pixeis(particle.y)
+        if self.map[row][col] == 0 or self.map[row][col] == 205:
+            return 300
+    
+
+        # TODO: subsample the recived actual laser scan using the
+        # subsample_laser_scan method above
+        # actual ranges and angles
+        [actual_ranges, angles] = self.convert_laser(laser_scan_msg, self.laser_min_range, self.laser_max_range, self.laser_min_angle, self.laser_max_angle)
+
+        min_range = min(actual_ranges)
+        max_range = max(actual_ranges)
         
+        # TODO: simulate a laser scan using one of the methods of this class
+        predict_ranges = self.simulate_laser_scan_for_particle(particle.x, particle.y, particle.theta, angles, self.laser_min_range, self.laser_max_range)
+      
+
+        # TODO: compute the difference bwteen predicted ranges and actual ranges
+
+        diff = [actual_range - predict_range for actual_range, predict_range in zip(actual_ranges, predict_ranges)]
+        #print "diff", diff
+        # Take the squared norm of that difference
+        norm_error = 0
+        norm_error = np.linalg.norm(diff)
+        return norm_error**2
+   
+
+    def convert_laser(self, scan, min_range, max_range, min_angle, max_angle):
+        N = len(scan)
+        self.angles = [(max_angle-min_angle)*float(i)/N + min_angle for i in range(N)]
+
+        self.real_ranges = []
+        for i in scan:
+            if i >= min_range and i <= max_range:
+                self.real_ranges.append(i)
+            if i < min_range:
+                self.real_ranges.append(min_range)
+            if i > max_range:
+                self.real_ranges.append(max_range)
+
+
+    def raytracing(self, x, y, theta, angles, min_range, max_range):
+        ranges = []
+       
+        for angle in self.angles:
+            phi = self.theta + angle
+            r = min_range
             
+            while r <= max_range:
+                xm = x + r*np.cos(phi)
+                ym = y + r*np.sin(phi)
+                row = self.conversao_pixeis(xm)
+                col = self.conversao_pixeis(ym)
+                if self.map[col][row] == 0 or self.map[col][row] == 205:
+                    break
+                r += self.resolution
+            ranges.append(r)
+        return ranges
 
-
-    def metric_to_grid_coords(self, x, y):
-        """Converts metric coordinates to occupancy grid coordinates"""
-
-        gx = (x - self.origin[0]) / self.resolution
-        gy = (y - self.origin[1]) / self.resolution
-        row = min(max(int(gy), 0), self.height)
-        col = min(max(int(gx), 0), self.width)
-        return (row, col)
 
 class MonteCarloLocalization(object):
 
@@ -137,8 +223,8 @@ class MonteCarloLocalization(object):
         self.last_scan = None
 
         rospy.Subscriber("/odom", Odometry, self.odometry_callback)
-        #rospy.Subscriber("/scan", LaserScan, self.laser_scan_callback)
-        print(self.pf.particles.theta)
+        rospy.Subscriber("/scan", LaserScan, self.laser_scan_callback)
+        
         self.position_pub = rospy.Publisher("/particles", MarkerArray, queue_size=1)
 
     def odometry_callback(self, msg):
@@ -150,25 +236,17 @@ class MonteCarloLocalization(object):
         self.t1 = self.t2
 
 
-    #def laser_scan_callback(self, msg):
-    #    self.pf.laser_min_angle = msg.angle_min
-    #    self.pf.laser_max_angle = msg.angle_max
-    #    self.pf.laser_min_range = msg.range_min
-    #    self.pf.laser_max_range = msg.range_max
-#
-    #    dt_since_last_scan = 0
-#
-    #    if self.last_scan:
-    #        dt_since_last_scan = (msg.header.stamp - self.last_scan.header.stamp).to_sec()
-#
-    #
-    #    self.pf.handle_observation(msg, dt_since_last_scan)
-#
-    #    self.pf.dx = 0
-    #    self.pf.dy = 0
-    #    self.pf.dyaw = 0
-#
-    #    self.last_scan = msg
+    def laser_scan_callback(self, msg):
+        self.pf.laser_min_angle = msg.angle_min
+        self.pf.laser_max_angle = msg.angle_max
+        self.pf.laser_min_range = msg.range_min
+        self.pf.laser_max_range = msg.range_max
+
+    
+        self.pf.handle_observation(msg)
+
+
+
 
     def timer(self):
         self.timer = rospy.Timer(rospy.Duration(1), self.publish)
