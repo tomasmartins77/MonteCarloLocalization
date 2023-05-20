@@ -77,7 +77,7 @@ class ParticleFilter(object):
         return x * self.resolution + self.origin[0]
 
     def conversao_pixeis(self, x):
-        return (x - self.origin[0]) / self.resolution
+        return int((x - self.origin[0]) / self.resolution)
 
     def espaco_livre(self):
         arraymap = []
@@ -127,7 +127,7 @@ class ParticleFilter(object):
 
         n_eff = n_eff_weight
 
-        if n_eff > 50:
+        if n_eff > 10:
             self.particles = new_particles
 
     def get_prediction_error_squared(self, laser_scan_msg, particle):
@@ -135,6 +135,7 @@ class ParticleFilter(object):
         # give it a large error
         row = self.conversao_pixeis(particle.x)
         col = self.conversao_pixeis(particle.y)
+
         if self.map[row][col] == 0 or self.map[row][col] == 205:
             return 300
 
@@ -260,7 +261,8 @@ class MonteCarloLocalization(object):
         omega = msg.twist.twist.angular.z
         self.t2 = msg.header.stamp.secs + msg.header.stamp.nsecs * (10 ** -9)
         if self.t1 != 0 and self.pf.tamanho_livre is not None:
-            self.pf.predict_particle_odometry(self.pf.particles, v, omega, self.t2 - self.t1)
+            for particle in self.pf.particles:
+                self.pf.predict_particle_odometry(particle, v, omega, self.t2 - self.t1)
         self.t1 = self.t2
 
     def laser_scan_callback(self, msg):
@@ -268,23 +270,23 @@ class MonteCarloLocalization(object):
         self.pf.laser_max_angle = msg.angle_max
         self.pf.laser_min_range = msg.range_min
         self.pf.laser_max_range = msg.range_max
-        self.pf.handle_observation(msg)
+        self.pf.handle_observation(msg.ranges)
 
     def timer(self):
-        self.timer = rospy.Timer(rospy.Duration(1), self.publish)
+        self.timer = rospy.Timer(rospy.Duration(0.5), self.publish)
         self.h_timerActivate = True
 
     def publish(self, msg):
         qz = [0] * self.num_particles
         qw = [0] * self.num_particles
 
-        for t in range(self.num_particles):
+        for t in range(len(self.pf.particles)):
             ([_, _, qz[t], qw[t]]) = tf.transformations.quaternion_from_euler(0, 0, self.pf.particles[t].theta)
         if self.pf.tamanho_livre is not None:
-            for i in range(self.num_particles):
+            for i in range(len(self.pf.particles)):
                 msg = Marker()
                 msg.action = msg.ADD
-                msg.type = msg.ARROW
+                msg.type = msg.SPHERE
                 msg.id = i
                 msg.pose.position.x = self.pf.particles[i].x
                 msg.pose.position.y = self.pf.particles[i].y
@@ -294,12 +296,12 @@ class MonteCarloLocalization(object):
                 msg.color.r = self.r[i]
                 msg.color.g = self.g[i]
                 msg.color.b = self.b[i]
-                msg.scale.x = 0.25
-                msg.scale.y = 0.05
-                msg.scale.z = 0.05
-                # msg.scale.x = 0.02
-                # msg.scale.y = 0.02
-                # msg.scale.z = 0.02
+                #msg.scale.x = 0.25
+                #msg.scale.y = 0.05
+                #msg.scale.z = 0.05
+                msg.scale.x = 0.1
+                msg.scale.y = 0.1
+                msg.scale.z = 0.1
                 msg.header.stamp = rospy.Time.now()
                 msg.header.frame_id = "base_footprint"
                 if i > self.num_particles:
@@ -325,8 +327,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/quadrado.pgm", byteorder='<')
-        with open('/home/tomas/catkin_ws/src/sintetic/maps/quadrado.yaml', 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/gmapping_01.pgm", byteorder='<')
+        with open('/home/tomas/catkin_ws/src/sintetic/maps/gmapping_01.yaml', 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
 
@@ -346,7 +348,7 @@ class MonteCarloLocalization(object):
 
 
 if __name__ == '__main__':
-    num_particles = 50
+    num_particles = 1000
 
     mcl = MonteCarloLocalization(num_particles)
 
