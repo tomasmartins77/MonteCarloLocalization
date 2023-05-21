@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import rospy
 import tf
 import tf.transformations as tr
@@ -29,13 +28,15 @@ import pandas as pd
 from visualization_msgs.msg import Marker, MarkerArray
 import re
 import numpy
+from matplotlib import transforms
 
 
 class Particle(object):
-    def __init__(self, x, y, theta):
+    def __init__(self, x, y, theta, weight):
         self.x = x
         self.y = y
         self.theta = theta
+        self.weight = weight
 
 
 class ParticleFilter(object):
@@ -43,7 +44,7 @@ class ParticleFilter(object):
                  laser_min_range, laser_max_range, laser_min_angle, laser_max_angle):
 
         self.num_particles = num_particles
-
+        self.laserscan_available = True
         # Workspace boundaries
         self.map = map
         self.position_particula = []
@@ -64,6 +65,10 @@ class ParticleFilter(object):
 
         # Current odometry measurement of the robot
         self.robot_odom = None
+        #self.movimento = []
+        #self.movimento.x = 0
+        #self.movimento.y = 0
+        #self.movimento.theta = 0
 
         # Relative motion since the last time particles were updated
         self.dx = 0
@@ -71,13 +76,12 @@ class ParticleFilter(object):
         self.dyaw = 0
 
         self.particles = []
-        self.weights = []
 
     def conversao_metros(self, x):
         return x * self.resolution + self.origin[0]
 
     def conversao_pixeis(self, x):
-        return int((x - self.origin[0]) / self.resolution)
+        return ((x - self.origin[0]) / self.resolution).astype(int)
 
     def espaco_livre(self):
         arraymap = []
@@ -93,92 +97,90 @@ class ParticleFilter(object):
 
     def init_particles(self):
         for i in self.position_particula:
-            x = self.conversao_metros(i[0])
-            y = self.conversao_metros(i[1])
+            x = self.conversao_metros(i[1])
+            y = self.conversao_metros(i[0])
             theta = np.random.uniform(-np.pi, np.pi)
-            self.particles.append(Particle(x, y, theta))
+            self.particles.append(Particle(x, y, theta, 1/self.num_particles))
 
     def predict_particle_odometry(self, particle, v, omega, dt):
-        if v >= 0.001 or omega >= 0.01:
-            particle.x = particle.x + v * np.cos(particle.theta) * dt
-            particle.y = particle.y + v * np.sin(particle.theta) * dt
+        
+    
+        if (v >= 0.001 or omega >= 0.01):
             particle.theta = particle.theta + omega * dt
+            particle.x = particle.x + v * np.cos(particle.theta) * dt 
+            particle.y = particle.y + v * np.sin(particle.theta) * dt 
+
+
+    
 
     def handle_observation(self, laser_scan):
         """Does prediction, weight update, and resampling."""
-        errors = []
-        # self.weights = [0] * len(self.particles)
+        self.laserscan_available  = False
+        weight_total = 0
         for particle in self.particles:
             # for each particle, compute the laser scan difference
-            error = self.get_prediction_error_squared(laser_scan, particle)
-            # sig_error = self.sigmoid(error)
-            errors.append(error)
-            # self.weights.append(exp(-error))
-
-        self.weights = [exp(-error) for error in errors]
-        weight_sum = sum(self.weights)
-
-        new_particles = []
-        self.resample(new_particles)
-
-        # approach 2: calculate the effective sample size by weight
-        sig_weight = [self.sigmoid(error) for error in errors]
-        n_eff_weight = sum([1 / (weight ** 2) for weight in sig_weight])
-
-        n_eff = n_eff_weight
-
-        if n_eff > 10:
-            self.particles = new_particles
+            particle.weight = self.get_prediction_error_squared(laser_scan, particle)
+            weight_total += particle.weight
+        if weight_total != 0:
+            for i in self.particles:
+                i.weight = i.weight / weight_total
+            self.resample()
+        self.laserscan_available  = True
+        
 
     def get_prediction_error_squared(self, laser_scan_msg, particle):
-        # If the particle falls inside an obstacle
-        # give it a large error
+        
         row = self.conversao_pixeis(particle.x)
         col = self.conversao_pixeis(particle.y)
 
         if self.map[row][col] == 0 or self.map[row][col] == 205:
-            return 300
+            return 0
 
-        # TODO: subsample the received actual laser scan using the
-        # subsample_laser_scan method above
-        # actual ranges and angles
-        [actual_ranges, angles] = self.convert_laser(laser_scan_msg, self.laser_min_range, self.laser_max_range,
-                                                     self.laser_min_angle, self.laser_max_angle)
+        actual_ranges, angle = self.convert_laser(laser_scan_msg, self.laser_min_range, self.laser_max_range)
+        
 
-        min_range = min(actual_ranges)
-        max_range = max(actual_ranges)
+        predict_ranges = self.raytracing(particle.x, particle.y, particle.theta,
+                                        self.laser_min_range, self.laser_max_range)
+        
+        diff = actual_ranges - predict_ranges[:,2]
+        norm_error = 1/np.linalg.norm(diff)
+        return norm_error
 
-        # TODO: simulate a laser scan using one of the methods of this class
-        predict_ranges = self.raytracing(particle.x, particle.y, particle.theta, angles,
-                                         self.laser_min_range, self.laser_max_range)
 
-        # TODO: compute the difference between predicted ranges and actual ranges
+    
+    def draw_line_until_dark_dot(self, x, y, ranges):
+        #height, width = map.shape
 
-        diff = [actual_range - predict_range for actual_range, predict_range in zip(actual_ranges, predict_ranges)]
+        # Plot the initial point
+        pyplot.scatter(self.conversao_pixeis(x), self.conversao_pixeis(y), color='blue')
+        x = [self.conversao_pixeis(x)] * len(ranges[:,0])
+        y = [self.conversao_pixeis(y)] * len(ranges[:,1])
+        
+        # Iterate over angles from 0 to 359 degrees with 1-degree intervals
+        pyplot.plot([x, ranges[:,0]], [y, ranges[:,1]], color='red', linewidth=0.5)
+        # Show the map with the red lines and initial point
+        pyplot.imshow(self.map, cmap='gray')
+        pyplot.show()
 
-        # Take the squared norm of that difference
-        norm_error = np.linalg.norm(diff)
-        return norm_error ** 2
-
-    def convert_laser(self, scan, min_range, max_range, min_angle, max_angle):
-        n = len(scan)
-        angles = [(max_angle - min_angle) * float(i) / n + min_angle for i in range(n)]
-
+    def convert_laser(self, scan, min_range, max_range):
+        step = 12
+        angle=np.arange(0, 360, step)
+        ssss = scan[::-step]
         real_ranges = []
-        for i in scan:
+        for i in ssss:
             if min_range <= i <= max_range:
                 real_ranges.append(i)
-            if i < min_range:
+            elif i < min_range:
                 real_ranges.append(min_range)
-            if i > max_range:
+            elif i > max_range:
                 real_ranges.append(max_range)
-            return real_ranges, angles
+        real_ranges = np.array(real_ranges)    
+        return real_ranges, angle
 
-    def raytracing(self, x, y, theta, angles, min_range, max_range):
-        ranges = []
-
-        for angle in angles:
-            phi = theta + angle
+    def raytracing(self, x, y, theta, min_range, max_range):
+        ranges = [] 
+        for angle in range(0, 360, 12):
+            phi = theta + np.radians(angle)
             r = min_range
 
             while r <= max_range:
@@ -189,32 +191,28 @@ class ParticleFilter(object):
                 if self.map[col][row] == 0 or self.map[col][row] == 205:
                     break
                 r += self.resolution
-            ranges.append(r)
+            ranges.append([row,col,r])
+        ranges = np.array(ranges)
+        #self.draw_line_until_dark_dot(x, y, ranges)
         return ranges
 
-    def resample(self, new_particles):
 
-        # TODO: sample particle i with probability that
-        # is proportional to its weight w_i. Sampling
-        # can be done with repetition/replacement, so
-        # you can sample the same particle more than once.
 
-        # particle_indexes = []
-        sample_u = np.random.uniform(0, 1)
-        index = int(sample_u * (self.num_particles - 1))
-        beta = 0.0
-        if not self.weights:
-            self.weights = [1] * self.num_particles
-        max_w = max(self.weights)
-
-        for particle in self.particles:
-            beta += np.random.uniform(0, 1) * 2.0 * max_w
-            while beta > self.weights[index]:
-                beta -= self.weights[index]
-                index = (index + 1) % self.num_particles
-            particle = self.particles[index]
-
-            new_particles.append(Particle(particle.x, particle.y, particle.theta))
+    def resample(self):
+        new_particles = []
+        r = np.random.uniform(0, 1/self.num_particles)
+        c = self.particles[0].weight    
+        i = 0
+        for m in range(self.num_particles):
+            u = r + m * (1/self.num_particles)
+            while u >= c:
+                i += 1
+                c += self.particles[i].weight
+            print(i)
+            new_particles.append(Particle(self.particles[i].x, self.particles[i].y, self.particles[i].theta, 1/self.num_particles))        
+        c = 0
+        self.particles = new_particles
+    
 
     def sigmoid(self, x):
         """Numerically-stable sigmoid function."""
@@ -270,6 +268,7 @@ class MonteCarloLocalization(object):
         self.pf.laser_max_angle = msg.angle_max
         self.pf.laser_min_range = msg.range_min
         self.pf.laser_max_range = msg.range_max
+        
         self.pf.handle_observation(msg.ranges)
 
     def timer(self):
@@ -286,22 +285,22 @@ class MonteCarloLocalization(object):
             for i in range(len(self.pf.particles)):
                 msg = Marker()
                 msg.action = msg.ADD
-                msg.type = msg.SPHERE
+                msg.type = msg.ARROW
                 msg.id = i
                 msg.pose.position.x = self.pf.particles[i].x
                 msg.pose.position.y = self.pf.particles[i].y
                 msg.pose.orientation.w = qw[i]
                 msg.pose.orientation.z = qz[i]
-                msg.color.a = 1.0
+                msg.color.a = 0.8
                 msg.color.r = self.r[i]
                 msg.color.g = self.g[i]
                 msg.color.b = self.b[i]
-                #msg.scale.x = 0.25
-                #msg.scale.y = 0.05
-                #msg.scale.z = 0.05
-                msg.scale.x = 0.1
+                msg.scale.x = 0.25
                 msg.scale.y = 0.1
                 msg.scale.z = 0.1
+                #msg.scale.x = 0.1
+                #msg.scale.y = 0.1
+                #msg.scale.z = 0.1
                 msg.header.stamp = rospy.Time.now()
                 msg.header.frame_id = "base_footprint"
                 if i > self.num_particles:
@@ -327,8 +326,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/gmapping_01.pgm", byteorder='<')
-        with open('/home/tomas/catkin_ws/src/sintetic/maps/gmapping_01.yaml', 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/mymap.pgm", byteorder='<')
+        with open('/home/tomas/catkin_ws/src/sintetic/maps/mymap.yaml', 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
 
@@ -348,7 +347,7 @@ class MonteCarloLocalization(object):
 
 
 if __name__ == '__main__':
-    num_particles = 1000
+    num_particles = 400
 
     mcl = MonteCarloLocalization(num_particles)
 
