@@ -30,13 +30,11 @@ import re
 import numpy
 from matplotlib import transforms
 
-
 class Particle(object):
-    def __init__(self, x, y, theta, weight):
+    def __init__(self, x, y, theta):
         self.x = x
         self.y = y
         self.theta = theta
-        self.weight = weight
 
 
 class ParticleFilter(object):
@@ -81,73 +79,122 @@ class ParticleFilter(object):
         return x * self.resolution + self.origin[0]
 
     def conversao_pixeis(self, x):
-        return ((x - self.origin[0]) / self.resolution).astype(int)
+        a = ((x - self.origin[0]) / self.resolution).astype(int)
+        return np.where((a >= self.width) | (a<0), 0, a)
+
 
     def espaco_livre(self):
-        arraymap = []
-        for x in range(self.width):
-            for y in range(self.height):
-                if self.map[x][y] == 254:
-                    arraymap.append([x, y])
+        indices = np.argwhere(self.map == 254)
+        arraymap = indices.tolist()
         self.tamanho_livre = len(arraymap)
-        x = np.random.randint(self.tamanho_livre, size=self.num_particles)
-        for i in x:
-            self.position_particula.append(arraymap[i])
-        self.position_particula = np.array(self.position_particula)
+        x = np.random.choice(self.tamanho_livre, size=self.num_particles, replace=True)
+        self.position_particula = np.array(arraymap)[x]
 
     def init_particles(self):
         for i in self.position_particula:
             x = self.conversao_metros(i[1])
             y = self.conversao_metros(i[0])
             theta = np.random.uniform(-np.pi, np.pi)
-            self.particles.append(Particle(x, y, theta, 1/self.num_particles))
+            self.particles.append(Particle(x, y, theta))
 
     def predict_particle_odometry(self, particle, v, omega, dt):
-        
-    
         if (v >= 0.001 or omega >= 0.01):
             particle.theta = particle.theta + omega * dt
-            particle.x = particle.x + v * np.cos(particle.theta) * dt 
-            particle.y = particle.y + v * np.sin(particle.theta) * dt 
-
-
+            particle.x = particle.x + v * np.cos(particle.theta) * dt
+            particle.y = particle.y + v * np.sin(particle.theta) * dt
     
-
     def handle_observation(self, laser_scan):
         """Does prediction, weight update, and resampling."""
         self.laserscan_available  = False
-        weight_total = 0
-        for particle in self.particles:
-            # for each particle, compute the laser scan difference
-            particle.weight = self.get_prediction_error_squared(laser_scan, particle)
-            weight_total += particle.weight
+        
+        actual_ranges = self.convert_laser(laser_scan, self.laser_min_range, self.laser_max_range)
+        
+        weights = [self.laser_diff(actual_ranges, particle) for particle in self.particles]
+        
+        weight_total = sum(weights)
+
         if weight_total != 0:
-            for i in self.particles:
-                i.weight = i.weight / weight_total
-            self.resample()
+            normalized_weights = [weight / weight_total for weight in weights]
+            self.particles = self.resample(normalized_weights)
+        
         self.laserscan_available  = True
         
 
-    def get_prediction_error_squared(self, laser_scan_msg, particle):
+    def laser_diff(self, actual_ranges, particle):
         
         row = self.conversao_pixeis(particle.x)
         col = self.conversao_pixeis(particle.y)
 
         if self.map[row][col] == 0 or self.map[row][col] == 205:
             return 0
-
-        actual_ranges, angle = self.convert_laser(laser_scan_msg, self.laser_min_range, self.laser_max_range)
-        
-
-        predict_ranges = self.raytracing(particle.x, particle.y, particle.theta,
-                                        self.laser_min_range, self.laser_max_range)
+     
+        predict_ranges = self.raytracing(particle.x, particle.y, particle.theta, self.laser_max_range)
         
         diff = actual_ranges - predict_ranges[:,2]
+        
         norm_error = 1/np.linalg.norm(diff)
         return norm_error
 
+    def convert_laser(self, scan, min_range, max_range):
+        step = 1
+        wanted_ranges = np.array([s if isinstance(s, (int, float)) else s[0] for s in scan[::-step]])
+        mask = (wanted_ranges >= min_range) & (wanted_ranges <= max_range)
+        real_ranges = np.where(mask, wanted_ranges, np.clip(wanted_ranges, min_range, max_range))
+        
+        return real_ranges
 
-    
+    def raytracing(self, x, y, theta, max_range):
+        ranges = []
+
+        # Precompute trigonometric values
+        angles = np.arange(0, 360, 1)
+        phi_values = theta + np.radians(angles)
+
+        # Vectorized calculations
+        r_values = np.arange(0, max_range, self.resolution)
+        x_values = x + np.outer(r_values, np.cos(phi_values))
+        y_values = y + np.outer(r_values, np.sin(phi_values))
+        row_values = self.conversao_pixeis(x_values)
+        col_values = self.conversao_pixeis(y_values)
+
+        # Find wall indices
+        mask = (self.map[col_values, row_values] == 0) | (self.map[col_values, row_values] == 205)
+        hit_indices = np.argmax(mask, axis=0)
+
+        for i, hit_index in enumerate(hit_indices):
+            if hit_index > 0:
+                row = row_values[hit_index, i]
+                col = col_values[hit_index, i]
+                r = r_values[hit_index]
+            else:
+                row = row_values[-1, i]
+                col = col_values[-1, i]
+                r = max_range
+
+            ranges.append([row, col, r])
+
+        ranges = np.array(ranges)
+        #self.draw_line_until_dark_dot(x, y, ranges)
+        return ranges
+       
+    def resample(self, normalized_weights):
+        new_particles = np.empty(self.num_particles, dtype=object)
+        r = np.random.uniform(0, 1 / self.num_particles)
+        cum_sum_weights = np.cumsum(normalized_weights)
+        u_values = r + np.arange(self.num_particles) * (1 / self.num_particles)
+
+        i = 0
+        for m, u in enumerate(u_values):
+            while u >= cum_sum_weights[i]:
+                i += 1
+            old_particle = self.particles[i]
+            x = old_particle.x + np.random.normal(0, 0.01)
+            y = old_particle.y + np.random.normal(0, 0.01)
+            theta = old_particle.theta + np.random.normal(0, 0.01)
+            new_particles[m] = Particle(x, y, theta)
+
+        return new_particles
+
     def draw_line_until_dark_dot(self, x, y, ranges):
         #height, width = map.shape
 
@@ -162,68 +209,6 @@ class ParticleFilter(object):
         pyplot.imshow(self.map, cmap='gray')
         pyplot.show()
 
-    def convert_laser(self, scan, min_range, max_range):
-        step = 12
-        angle=np.arange(0, 360, step)
-        ssss = scan[::-step]
-        real_ranges = []
-        for i in ssss:
-            if min_range <= i <= max_range:
-                real_ranges.append(i)
-            elif i < min_range:
-                real_ranges.append(min_range)
-            elif i > max_range:
-                real_ranges.append(max_range)
-        real_ranges = np.array(real_ranges)    
-        return real_ranges, angle
-
-    def raytracing(self, x, y, theta, min_range, max_range):
-        ranges = [] 
-        for angle in range(0, 360, 12):
-            phi = theta + np.radians(angle)
-            r = min_range
-
-            while r <= max_range:
-                xm = x + r * np.cos(phi)
-                ym = y + r * np.sin(phi)
-                row = self.conversao_pixeis(xm)
-                col = self.conversao_pixeis(ym)
-                if self.map[col][row] == 0 or self.map[col][row] == 205:
-                    break
-                r += self.resolution
-            ranges.append([row,col,r])
-        ranges = np.array(ranges)
-        #self.draw_line_until_dark_dot(x, y, ranges)
-        return ranges
-
-
-
-    def resample(self):
-        new_particles = []
-        r = np.random.uniform(0, 1/self.num_particles)
-        c = self.particles[0].weight    
-        i = 0
-        for m in range(self.num_particles):
-            u = r + m * (1/self.num_particles)
-            while u >= c:
-                i += 1
-                c += self.particles[i].weight
-            print(i)
-            new_particles.append(Particle(self.particles[i].x, self.particles[i].y, self.particles[i].theta, 1/self.num_particles))        
-        c = 0
-        self.particles = new_particles
-    
-
-    def sigmoid(self, x):
-        """Numerically-stable sigmoid function."""
-        if x >= 0:
-            z = exp(-x)
-            return 1 / (1 + z)
-        else:
-            # if x is less than zero then z will be small, denom can't be
-            # zero because it's 1+z.
-            z = exp(x)
-            return z / (1 + z)
 
 class MonteCarloLocalization(object):
 
@@ -236,7 +221,7 @@ class MonteCarloLocalization(object):
         self.num_particles = num_particles
 
         self.MkArray = MarkerArray()
-        self.timer()
+       
         self.t1 = 0
         self.t2 = 0
         self.r = np.random.uniform(0.0, 1.0, self.num_particles)
@@ -247,12 +232,14 @@ class MonteCarloLocalization(object):
                                  0, 0)
         self.pf.espaco_livre()
         self.pf.init_particles()
+  
         self.last_scan = None
 
+        self.position_pub = rospy.Publisher("/particles", MarkerArray, queue_size=1)
         rospy.Subscriber("/odom", Odometry, self.odometry_callback)
         rospy.Subscriber("/scan", LaserScan, self.laser_scan_callback)
 
-        self.position_pub = rospy.Publisher("/particles", MarkerArray, queue_size=1)
+        
 
     def odometry_callback(self, msg):
         v = msg.twist.twist.linear.x
@@ -271,42 +258,45 @@ class MonteCarloLocalization(object):
         
         self.pf.handle_observation(msg.ranges)
 
-    def timer(self):
-        self.timer = rospy.Timer(rospy.Duration(0.5), self.publish)
-        self.h_timerActivate = True
 
-    def publish(self, msg):
-        qz = [0] * self.num_particles
-        qw = [0] * self.num_particles
+    def publish(self):
+        self.MkArray.markers = []
 
-        for t in range(len(self.pf.particles)):
-            ([_, _, qz[t], qw[t]]) = tf.transformations.quaternion_from_euler(0, 0, self.pf.particles[t].theta)
+        qz = [tf.transformations.quaternion_from_euler(0, 0, particle.theta)[2] for particle in self.pf.particles]
+        qw = [tf.transformations.quaternion_from_euler(0, 0, particle.theta)[3] for particle in self.pf.particles]
+
         if self.pf.tamanho_livre is not None:
-            for i in range(len(self.pf.particles)):
-                msg = Marker()
-                msg.action = msg.ADD
-                msg.type = msg.ARROW
-                msg.id = i
-                msg.pose.position.x = self.pf.particles[i].x
-                msg.pose.position.y = self.pf.particles[i].y
-                msg.pose.orientation.w = qw[i]
-                msg.pose.orientation.z = qz[i]
-                msg.color.a = 0.8
-                msg.color.r = self.r[i]
-                msg.color.g = self.g[i]
-                msg.color.b = self.b[i]
-                msg.scale.x = 0.25
-                msg.scale.y = 0.1
-                msg.scale.z = 0.1
-                #msg.scale.x = 0.1
-                #msg.scale.y = 0.1
-                #msg.scale.z = 0.1
-                msg.header.stamp = rospy.Time.now()
-                msg.header.frame_id = "base_footprint"
-                if i > self.num_particles:
+            marker_index = 0
+            for i, particle in enumerate(self.pf.particles):
+                marker = Marker()
+                marker.action = Marker.ADD
+                marker.type = Marker.ARROW
+                marker.id = i
+                marker.pose.position.x = particle.x
+                marker.pose.position.y = particle.y
+                marker.pose.orientation.w = qw[i]
+                marker.pose.orientation.z = qz[i]
+                marker.color.a = 0.8
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+                marker.scale.x = 0.1
+                marker.scale.y = 0.02
+                marker.scale.z = 0.02
+                #marker.scale.x = 0.1
+                #marker.scale.y = 0.1
+                #marker.scale.z = 0.1
+                marker.header.stamp = rospy.Time.now()
+                marker.header.frame_id = "base_footprint"
+                
+                self.MkArray.markers.append(marker)
+                
+                marker_index += 1
+                if marker_index > self.num_particles:
                     self.MkArray.markers.pop(0)
-                self.MkArray.markers.append(msg)
+                
             self.position_pub.publish(self.MkArray)
+
 
     def read_pgm(self, filename, byteorder='>'):
         with open(filename, 'rb') as f:
@@ -326,8 +316,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/mymap.pgm", byteorder='<')
-        with open('/home/tomas/catkin_ws/src/sintetic/maps/mymap.yaml', 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/gmapping_02.pgm", byteorder='<')
+        with open('/home/tomas/catkin_ws/src/sintetic/maps/gmapping_02.yaml', 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
 
@@ -345,10 +335,15 @@ class MonteCarloLocalization(object):
         # gray = 205, free = 254, occupied = 0
         return map, resolution, origin
 
+    def run(self):
+        rate = rospy.Rate(20)
+        while not rospy.is_shutdown():
+            self.publish()
+            rate.sleep()
 
 if __name__ == '__main__':
-    num_particles = 400
+    num_particles = 1000
 
     mcl = MonteCarloLocalization(num_particles)
 
-    rospy.spin()
+    mcl.run()
