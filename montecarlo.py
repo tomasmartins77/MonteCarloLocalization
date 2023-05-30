@@ -61,9 +61,12 @@ class ParticleFilter(object):
         self.laser_min_range = laser_min_range
 
         self.Q = np.zeros((90, 90))
-        np.fill_diagonal(self.Q, 5)
-        self.denominador = np.sqrt(np.linalg.det(2*np.pi*self.Q)) #Fixo, logo metendo aqui assim acelera as contas
+        np.fill_diagonal(self.Q, 100)
+        print(self.Q)
+        
+        self.denominador = np.sqrt(2*np.pi*np.linalg.det(self.Q)) #Fixo, logo metendo aqui assim acelera as contas
         self.Q = np.linalg.inv(self.Q) #Fixo, logo metendo aqui assim acelera as contas
+        print(self.Q)
         self.particles = []
 
     def conversao_metros(self, x, y):
@@ -97,9 +100,9 @@ class ParticleFilter(object):
 
     def predict_particle_odometry(self, particle, v, omega, dt):
         if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):
-            particle.theta = particle.theta + omega * dt + np.random.normal(0, 0.005)
-            particle.x = particle.x + v * np.cos(particle.theta) * dt + np.random.normal(0, 0.003)
-            particle.y = particle.y + v * np.sin(particle.theta) * dt + np.random.normal(0, 0.003)
+            particle.theta = particle.theta + omega * dt + np.random.normal(0, 0.0005)
+            particle.x = particle.x + v * np.cos(particle.theta) * dt + np.random.normal(0, 0.006)
+            particle.y = particle.y + v * np.sin(particle.theta) * dt + np.random.normal(0, 0.006)
     
     def update_particle(self, laser_scan):
         """weight update, and resampling."""
@@ -144,9 +147,13 @@ class ParticleFilter(object):
         diff = np.array(diff)
 
         diff_transpose = diff[:, np.newaxis]
+        print(diff_transpose)
+        print(self.Q)
+        print(diff)
 
-        numerador = exp(-0.5*np.dot(np.dot(diff, self.Q), diff_transpose))
-        particle.weight = (numerador / self.denominador)
+        numerador = np.exp(-0.5*np.linalg.multi_dot([diff, self.Q, diff_transpose]))
+      
+        particle.weight = (numerador / self.denominador) * particle.weight
         a = np.where(self.pesos_particula[0,:] == 0)
         for i in range(len(self.pesos_particula[0,:])):
             if(np.size(a) == 0):
@@ -362,8 +369,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("gmapping_02.pgm", byteorder='<')
-        with open('gmapping_02.yaml', 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/lab.pgm", byteorder='<')
+        with open("/home/tomas/catkin_ws/src/sintetic/maps/lab.yaml", 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
         
