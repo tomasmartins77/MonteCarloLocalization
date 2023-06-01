@@ -60,8 +60,8 @@ class ParticleFilter(object):
         self.laser_max_range = laser_max_range
         self.laser_min_range = laser_min_range
 
-        self.Q = np.zeros((45, 45))
-        np.fill_diagonal(self.Q, 15)
+        self.Q = np.zeros((90, 90))
+        np.fill_diagonal(self.Q, 10)
         
         self.denominador = np.sqrt(2*np.pi*np.linalg.det(self.Q)) #Fixo, logo metendo aqui assim acelera as contas
         self.Q = np.linalg.inv(self.Q) #Fixo, logo metendo aqui assim acelera as contas
@@ -93,8 +93,8 @@ class ParticleFilter(object):
         for i in self.position_particula:
             x, y = self.conversao_metros(i[1], i[0])
             theta = np.random.uniform(0, 2*np.pi)
-            
-            #x, y = self.conversao_metros(np.array(80), np.array(80))
+
+            #x, y = self.conversao_metros(np.array(np.random.uniform(50, 70)), np.array(np.random.uniform(70, 90)))
             #theta = 0
             self.particles.append(Particle(x, y, theta, 1/self.num_particles))
 
@@ -107,26 +107,26 @@ class ParticleFilter(object):
     def update_particle(self, laser_scan, v, omega):
         """weight update, and resampling."""
         actual_ranges = self.convert_laser(laser_scan, self.laser_min_range, self.laser_max_range)
-        if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):
-            [self.laser_diff(actual_ranges, particle) for particle in self.particles]    
-            weight_total = sum([particle.weight for particle in self.particles])
-            if weight_total == 0:
-                self.particles = self.reset_particulas()
-            else: 
-                for particle in self.particles:
-                        particle.weight = particle.weight / weight_total
-                N_eff_max = 0        
-                N_eff = 1 / sum([particle.weight**2 for particle in self.particles])
-                self.mcl.publish_max(self.pesos_particula)
-                for i in range(len(self.pesos_particula[0,:])):
-                    N_eff_max += (self.pesos_particula[0,i]/weight_total)**2
-                    self.pesos_particula[0,i] = 0;
-                N_eff_max = 1/N_eff_max
-                novas_particulas = np.clip(0, 0,np.floor(N_eff_max * 0.025).astype(int)) #Para mudar o segunda zero para self.num_particles quando quisermos kidnapping
-                if N_eff <= 0.3 * self.num_particles:
-                    print("Resampling")
-                    self.particles = self.resample(novas_particulas) 
-        
+        #if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):
+        [self.laser_diff(actual_ranges, particle) for particle in self.particles]    
+        weight_total = sum([particle.weight for particle in self.particles])
+        if weight_total == 0:
+            self.particles = self.reset_particulas()
+        else: 
+            for particle in self.particles:
+                    particle.weight = particle.weight / weight_total
+                    print(particle.weight)
+            N_eff_max = 0        
+            N_eff = 1 / sum([particle.weight**2 for particle in self.particles])
+            self.mcl.publish_max(self.pesos_particula)
+            for i in range(len(self.pesos_particula[0,:])):
+                N_eff_max += (self.pesos_particula[0,i]/weight_total)**2
+                self.pesos_particula[0,i] = 0;
+            N_eff_max = 1/N_eff_max
+            novas_particulas = np.clip(0, 0,np.floor(N_eff_max * 0.025).astype(int)) #Para mudar o segunda zero para self.num_particles quando quisermos kidnapping
+            if N_eff <= 0.3 * self.num_particles:
+                self.particles = self.resample(novas_particulas) 
+    
     def reset_particulas(self):
         new_particles = []
         for i in self.position_particula:
@@ -146,7 +146,7 @@ class ParticleFilter(object):
         predict_ranges = np.array(predict_ranges)
 
         actual_ranges = np.around(actual_ranges, 2)
-        diff = actual_ranges - predict_ranges[:,2]
+        diff = -actual_ranges +  predict_ranges[:,2]
         diff = np.array(diff)
         
         diff_transpose = diff[:, np.newaxis]
@@ -154,6 +154,9 @@ class ParticleFilter(object):
         numerador = np.exp(-0.5*np.linalg.multi_dot([diff, self.Q, diff_transpose]))
       
         particle.weight = (numerador / self.denominador) * particle.weight
+
+        #short = np.where(diff < 0,exp , diff)
+        #max_range = np.where(diff > 3.5)
         
         a = np.where(self.pesos_particula[0,:] == 0)
         for i in range(len(self.pesos_particula[0,:])):
@@ -169,7 +172,7 @@ class ParticleFilter(object):
                 self.pesos_particula[2,a[0]] = particle.y;
     
     def convert_laser(self, scan, min_range, max_range):
-        step = 8
+        step = 4
         wanted_ranges = np.array([s for s in scan[::step]])
         real_ranges = np.clip(wanted_ranges, min_range, max_range)
         return real_ranges
@@ -178,7 +181,7 @@ class ParticleFilter(object):
         ranges = []
 
         # Precompute trigonometric values
-        angles = np.arange(0, 360, 8)
+        angles = np.arange(0, 360, 4)
         phi_values = theta + np.radians(angles)
         # Vectorized calculations
         r_values = np.arange(0, max_range, self.resolution)
@@ -212,13 +215,14 @@ class ParticleFilter(object):
         r = np.random.uniform(0, 1/(self.num_particles-novas_particulas[0]))
         c = self.particles[0].weight    
         i = 0
-        print("Numero para entrar", self.num_particles-novas_particulas[0])
+      
         for m in range(self.num_particles-novas_particulas[0]):
             u = r + m * (1/(self.num_particles-novas_particulas[0]))
             while u >= c:
                 i += 1
                 c += self.particles[i].weight  
-            new_particles.append(Particle(self.particles[i].x, self.particles[i].y, self.particles[i].theta, 1/self.num_particles)) 
+            new_particles.append(Particle(self.particles[i].x, self.particles[i].y, self.particles[i].theta, 1/self.num_particles))
+
         if novas_particulas[0] > 0:
             for i in range(novas_particulas[0]):
                 h = np.random.choice(self.num_particles, 1, replace=True)
@@ -378,8 +382,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/piso51.pgm", byteorder='<')
-        with open("/home/tomas/catkin_ws/src/sintetic/maps/piso51.yaml", 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/lab.pgm", byteorder='<')
+        with open("/home/tomas/catkin_ws/src/sintetic/maps/lab.yaml", 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
         
@@ -405,7 +409,7 @@ class MonteCarloLocalization(object):
             rate.sleep()
 
 if __name__ == '__main__':
-    num_particles = 1000
+    num_particles = 2000
     
     mcl = MonteCarloLocalization(num_particles)
 
