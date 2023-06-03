@@ -61,7 +61,7 @@ class ParticleFilter(object):
         self.laser_min_range = laser_min_range
 
         self.Q = np.zeros((90, 90))
-        np.fill_diagonal(self.Q, 10)
+        np.fill_diagonal(self.Q, 15)
         
         self.denominador = np.sqrt(2*np.pi*np.linalg.det(self.Q)) #Fixo, logo metendo aqui assim acelera as contas
         self.Q = np.linalg.inv(self.Q) #Fixo, logo metendo aqui assim acelera as contas
@@ -82,50 +82,53 @@ class ParticleFilter(object):
 
     def espaco_livre(self):
         indices = np.argwhere(self.map == 254)
-       
-        arraymap = indices.tolist()
-      
+        indices_final = []
+        for i in indices:
+            if i[0] > 50 and i[0] < 100 and i[1] > 70 and i[1] < 100:
+                indices_final.append(i)
+        indices_final = np.array(indices_final)
+        arraymap = indices_final.tolist()
         self.tamanho_livre = len(arraymap)
         x = np.random.choice(self.tamanho_livre, size=self.num_particles, replace=True)
         self.position_particula = np.array(arraymap)[x]
+
 
     def init_particles(self):
         for i in self.position_particula:
             x, y = self.conversao_metros(i[1], i[0])
             theta = np.random.uniform(0, 2*np.pi)
 
-            #x, y = self.conversao_metros(np.array(np.random.uniform(50, 70)), np.array(np.random.uniform(70, 90)))
+            #x, y = self.conversao_metros(np.array(np.random.uniform(40, 80)), np.array(np.random.uniform(60, 100)))
             #theta = 0
             self.particles.append(Particle(x, y, theta, 1/self.num_particles))
 
     def predict_particle_odometry(self, particle, v, omega, dt):
         if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):
+            particle.x = particle.x + v * np.cos(particle.theta) * dt + np.random.normal(0, 0.004)
+            particle.y = particle.y + v * np.sin(particle.theta) * dt + np.random.normal(0, 0.004)
             particle.theta = particle.theta + omega * dt + np.random.normal(0, 0.0003)
-            particle.x = particle.x + v * np.cos(particle.theta) * dt + np.random.normal(0, 0.006)
-            particle.y = particle.y + v * np.sin(particle.theta) * dt + np.random.normal(0, 0.006)
     
     def update_particle(self, laser_scan, v, omega):
         """weight update, and resampling."""
         actual_ranges = self.convert_laser(laser_scan, self.laser_min_range, self.laser_max_range)
-        #if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):
-        [self.laser_diff(actual_ranges, particle) for particle in self.particles]    
-        weight_total = sum([particle.weight for particle in self.particles])
-        if weight_total == 0:
-            self.particles = self.reset_particulas()
-        else: 
-            for particle in self.particles:
-                    particle.weight = particle.weight / weight_total
-                    print(particle.weight)
-            N_eff_max = 0        
-            N_eff = 1 / sum([particle.weight**2 for particle in self.particles])
-            self.mcl.publish_max(self.pesos_particula)
-            for i in range(len(self.pesos_particula[0,:])):
-                N_eff_max += (self.pesos_particula[0,i]/weight_total)**2
-                self.pesos_particula[0,i] = 0;
-            N_eff_max = 1/N_eff_max
-            novas_particulas = np.clip(0, 0,np.floor(N_eff_max * 0.025).astype(int)) #Para mudar o segunda zero para self.num_particles quando quisermos kidnapping
-            if N_eff <= 0.3 * self.num_particles:
-                self.particles = self.resample(novas_particulas) 
+        if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):    
+            [self.laser_diff(actual_ranges, particle) for particle in self.particles]    
+            weight_total = sum([particle.weight for particle in self.particles])
+            if weight_total == 0:
+                self.particles = self.reset_particulas()
+            else: 
+                for particle in self.particles:
+                        particle.weight = particle.weight / weight_total
+                N_eff_max = 0        
+                N_eff = 1 / sum([particle.weight**2 for particle in self.particles])
+                self.mcl.publish_max(self.pesos_particula)
+                for i in range(len(self.pesos_particula[0,:])):
+                    N_eff_max += (self.pesos_particula[0,i]/weight_total)**2
+                    self.pesos_particula[0,i] = 0;
+                N_eff_max = 1/N_eff_max
+                novas_particulas = np.clip(0, 0,np.floor(N_eff_max * 0.025).astype(int)) #Para mudar o segunda zero para self.num_particles quando quisermos kidnapping
+                if N_eff <= 0.3 * self.num_particles:
+                    self.particles = self.resample(novas_particulas) 
     
     def reset_particulas(self):
         new_particles = []
@@ -237,7 +240,7 @@ class ParticleFilter(object):
         pyplot.scatter(x, y, color='blue')
         x = np.array([x] * len(ranges[:,1]))
         y = np.array([y] * len(ranges[:,0]))
-    
+        #plt.scatter(x, y, color='blue')
         # Iterate over angles from 0 to 359 degrees with 1-degree intervals
         pyplot.plot([x, ranges[:,0]], [y, ranges[:,1]], color='red', linewidth=0.5)
         # Show the map with the red lines and initial point
@@ -314,7 +317,7 @@ class MonteCarloLocalization(object):
                     marker.scale.y = 0.1
                     marker.scale.z = 0.1
                     marker.header.stamp = rospy.Time.now()
-                    marker.header.frame_id = "base_footprint"
+                    marker.header.frame_id = "map"
                     self.MkArraymax.markers.append(marker)
                     marker_index += 1
                     if marker_index > 11:
@@ -349,7 +352,7 @@ class MonteCarloLocalization(object):
                 #marker.scale.y = 0.1
                 #marker.scale.z = 0.1
                 marker.header.stamp = rospy.Time.now()
-                marker.header.frame_id = "base_footprint"
+                marker.header.frame_id = "map"
 
                 #x, y = self.pf.conversao_pixeis(particle.x, particle.y)
                 #pyplot.scatter(x, y, color='blue')
@@ -409,7 +412,7 @@ class MonteCarloLocalization(object):
             rate.sleep()
 
 if __name__ == '__main__':
-    num_particles = 2000
+    num_particles = 500
     
     mcl = MonteCarloLocalization(num_particles)
 
