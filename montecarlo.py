@@ -47,21 +47,21 @@ class ParticleFilter(object):
         # Workspace boundaries
         self.map = map
         self.position_particula = []
-        self.pesos_particula = np.array([[0.0]*10, [0.0]*10, [0.0]*10]) #pesos das particulas/ posicao x/ posicao y
+        self.pesos_particula = np.array([[0.0]*round(0.1*self.num_particles), [0.0]*round(0.1*self.num_particles), [0.0]*round(0.1*self.num_particles), [0.0]*round(0.1*self.num_particles)]) #pesos das particulas/ posicao x/ posicao y
         self.width = width
         self.height = height
         self.resolution = resolution
         self.origin = origin
         self.mcl = mcl
         self.tamanho_livre = None
-        
+        self.indices = []
         self.laser_max_angle = laser_max_angle
         self.laser_min_angle = laser_min_angle
         self.laser_max_range = laser_max_range
         self.laser_min_range = laser_min_range
 
         self.Q = np.zeros((90, 90))
-        np.fill_diagonal(self.Q, 15)
+        np.fill_diagonal(self.Q, 100)
         
         self.denominador = np.sqrt(2*np.pi*np.linalg.det(self.Q)) #Fixo, logo metendo aqui assim acelera as contas
         self.Q = np.linalg.inv(self.Q) #Fixo, logo metendo aqui assim acelera as contas
@@ -81,10 +81,10 @@ class ParticleFilter(object):
         return x, y
 
     def espaco_livre(self):
-        indices = np.argwhere(self.map == 254)
+        self.indices = np.argwhere(self.map == 254)
         indices_final = []
-        for i in indices:
-            if i[0] > 50 and i[0] < 100 and i[1] > 70 and i[1] < 100:
+        for i in self.indices:
+            if i[0] > 305 and i[0] < 360 and i[1] > 305 and i[1] < 345:
                 indices_final.append(i)
         indices_final = np.array(indices_final)
         arraymap = indices_final.tolist()
@@ -96,7 +96,7 @@ class ParticleFilter(object):
     def init_particles(self):
         for i in self.position_particula:
             x, y = self.conversao_metros(i[1], i[0])
-            theta = np.random.uniform(0, 2*np.pi)
+            theta = np.random.uniform(5/4 * np.pi, 7/4 * np.pi)
 
             #x, y = self.conversao_metros(np.array(np.random.uniform(40, 80)), np.array(np.random.uniform(60, 100)))
             #theta = 0
@@ -104,9 +104,9 @@ class ParticleFilter(object):
 
     def predict_particle_odometry(self, particle, v, omega, dt):
         if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):
-            particle.x = particle.x + v * np.cos(particle.theta) * dt + np.random.normal(0, 0.004)
-            particle.y = particle.y + v * np.sin(particle.theta) * dt + np.random.normal(0, 0.004)
-            particle.theta = particle.theta + omega * dt + np.random.normal(0, 0.0003)
+            particle.x = particle.x + v * np.cos(particle.theta) * dt + np.random.normal(0, 0.006)
+            particle.y = particle.y + v * np.sin(particle.theta) * dt + np.random.normal(0, 0.006)
+            particle.theta = particle.theta + omega * dt + np.random.normal(0, 0.003)
     
     def update_particle(self, laser_scan, v, omega):
         """weight update, and resampling."""
@@ -115,7 +115,7 @@ class ParticleFilter(object):
             [self.laser_diff(actual_ranges, particle) for particle in self.particles]    
             weight_total = sum([particle.weight for particle in self.particles])
             if weight_total == 0:
-                self.particles = self.reset_particulas()
+                self.particles = self.reset_particulas(self.pesos_particula[:,0])
             else: 
                 for particle in self.particles:
                         particle.weight = particle.weight / weight_total
@@ -128,14 +128,24 @@ class ParticleFilter(object):
                 N_eff_max = 1/N_eff_max
                 novas_particulas = np.clip(0, 0,np.floor(N_eff_max * 0.025).astype(int)) #Para mudar o segunda zero para self.num_particles quando quisermos kidnapping
                 if N_eff <= 0.3 * self.num_particles:
-                    self.particles = self.resample(novas_particulas) 
+                    self.particles = self.resample(novas_particulas)
     
-    def reset_particulas(self):
+    def reset_particulas(self, pesos_particula):
         new_particles = []
-        for i in self.position_particula:
+        indices_final = []
+        x,y = self.conversao_pixeis(pesos_particula[1], pesos_particula[2])
+        for i in self.indices:
+            if i[0] > y - 30 and i[0] < y + 30 and i[1] > x - 30 and i[1] < x + 30:
+                indices_final.append(i)
+        indices_final = np.array(indices_final)
+        arraymap = indices_final.tolist()
+        self.tamanho_livre = len(arraymap)
+        x = np.random.choice(self.tamanho_livre, size=self.num_particles, replace=True)
+        position_particula = np.array(arraymap)[x]
+        for i in position_particula:
             x, y = self.conversao_metros(i[1], i[0])
-            theta = np.random.uniform(-np.pi, np.pi)
-            new_particles.append(Particle(x, y, theta, 1/self.num_particles))
+            theta = np.random.uniform(pesos_particula[3] - 1/4*np.pi, pesos_particula[3] + 1/4*np.pi)
+            new_particles.append(Particle(x, y, theta, 1/self.num_particles))   
         return new_particles
     
     def laser_diff(self, actual_ranges, particle):
@@ -168,11 +178,13 @@ class ParticleFilter(object):
                     self.pesos_particula[0,i] = particle.weight;
                     self.pesos_particula[1,i] = particle.x;
                     self.pesos_particula[2,i] = particle.y;
+                    self.pesos_particula[3,i] = particle.theta;
                     break;
             else:
                 self.pesos_particula[0,a[0]] = particle.weight;
                 self.pesos_particula[1,a[0]] = particle.x;
                 self.pesos_particula[2,a[0]] = particle.y;
+                self.pesos_particula[3,a[0]] = particle.theta;
     
     def convert_laser(self, scan, min_range, max_range):
         step = 4
@@ -240,7 +252,7 @@ class ParticleFilter(object):
         pyplot.scatter(x, y, color='blue')
         x = np.array([x] * len(ranges[:,1]))
         y = np.array([y] * len(ranges[:,0]))
-        #plt.scatter(x, y, color='blue')
+        pyplot.scatter(x, y, color='blue')
         # Iterate over angles from 0 to 359 degrees with 1-degree intervals
         pyplot.plot([x, ranges[:,0]], [y, ranges[:,1]], color='red', linewidth=0.5)
         # Show the map with the red lines and initial point
@@ -300,28 +312,29 @@ class MonteCarloLocalization(object):
         self.MkArraymax.markers = []
         if self.pf.tamanho_livre is not None:
                 marker_index = 0; 
-                for i in range(len(pesos_particulas[0,:])):
-                    marker = Marker()
-                    marker.action = Marker.ADD
-                    marker.type = Marker.SPHERE
-                    marker.id = i
-                    marker.pose.position.x = pesos_particulas[1,i]
-                    marker.pose.position.y = pesos_particulas[2,i]
-                    marker.pose.orientation.w = 0.21710630958601523
-                    marker.pose.orientation.z = 0.9761479653914878
-                    marker.color.a = 0.5
-                    marker.color.r = 1.0
-                    marker.color.g = 0.0
-                    marker.color.b = 0.0
-                    marker.scale.x = 0.1
-                    marker.scale.y = 0.1
-                    marker.scale.z = 0.1
-                    marker.header.stamp = rospy.Time.now()
-                    marker.header.frame_id = "map"
-                    self.MkArraymax.markers.append(marker)
-                    marker_index += 1
-                    if marker_index > 11:
-                        self.MkArraymax.markers.pop(0)
+                x = sum(pesos_particulas[1,:])/len(pesos_particulas[1,:])
+                y = sum(pesos_particulas[2,:])/len(pesos_particulas[2,:])
+                marker = Marker()
+                marker.action = Marker.ADD
+                marker.type = Marker.SPHERE
+                marker.id = 1
+                marker.pose.position.x = x
+                marker.pose.position.y = y
+                marker.pose.orientation.w = 0.21710630958601523
+                marker.pose.orientation.z = 0.9761479653914878
+                marker.color.a = 0.5
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+                marker.scale.x = 0.1
+                marker.scale.y = 0.1
+                marker.scale.z = 0.1
+                marker.header.stamp = rospy.Time.now()
+                marker.header.frame_id = "map"
+                self.MkArraymax.markers.append(marker)
+                marker_index += 1
+                if marker_index > 11:
+                    self.MkArraymax.markers.pop(0)
                 self.position_max_pub.publish(self.MkArraymax.markers)
                     
     def publish(self):
@@ -385,8 +398,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/lab.pgm", byteorder='<')
-        with open("/home/tomas/catkin_ws/src/sintetic/maps/lab.yaml", 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/piso5.pgm", byteorder='<')
+        with open("/home/tomas/catkin_ws/src/sintetic/maps/piso5.yaml", 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
         
@@ -406,7 +419,7 @@ class MonteCarloLocalization(object):
         return map, resolution, origin
 
     def run(self):
-        rate = rospy.Rate(20)
+        rate = rospy.Rate(1)
         while not rospy.is_shutdown():
             self.publish()
             rate.sleep()
