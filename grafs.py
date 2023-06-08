@@ -64,14 +64,14 @@ def get_position():
     scatter_amcl.set_offsets(np.column_stack((amcl_x_pixels, amcl_y_pixels)))
     scatter_particles.set_offsets(np.column_stack((particles_x_pixels, particles_y_pixels)))
 
-    line_amcl[0].set_data(amcl_x_pixels, amcl_y_pixels)
+    """ line_amcl[0].set_data(amcl_x_pixels, amcl_y_pixels)
     scatter_particles2.set_offsets(np.column_stack((particles_x_pixels, particles_y_pixels)))
     ax2.relim()  # Update the limits of the axes
     ax2.autoscale_view()  # Auto-scale the view
 
     # Redraw the plot
     fig2.canvas.draw()
-    fig2.canvas.flush_events()
+    fig2.canvas.flush_events() """
 
     # Redraw the plot
     plt.pause(0.001)
@@ -97,9 +97,9 @@ def read_pgm(filename, byteorder='>'):
 def initialization():
     global resolution, origin, width, height, map, fig, ax, scatter_amcl, scatter_particles,fig2,ax2,line_amcl,line_particles,scatter_particles2
 
-    map, width, height = read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/piso5.pgm", byteorder='<')
+    map, width, height = read_pgm("/home/ubuntu/catkin_ws/src/montecarlo/maps/elevador.pgm", byteorder='<')
 
-    with open("/home/tomas/catkin_ws/src/sintetic/maps/piso5.yaml", 'r') as file:
+    with open("/home/ubuntu/catkin_ws/src/montecarlo/maps/elevador.yaml", 'r') as file:
         # Load the YAML contents
         yaml_data = yaml.safe_load(file)
 
@@ -119,12 +119,12 @@ def initialization():
     scatter_particles = ax.scatter([], [], color='blue', s=5, label='Particle Positions')
     ax.legend()
 
-    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    """ fig2, ax2 = plt.subplots(figsize=(10, 6))
     line_amcl = ax2.plot([], [], color='green', linestyle='-', linewidth=2, label='AMCL')
-    scatter_particles2 = ax2.scatter([], [], color='purple', s=5, label='Particle Positions')
+    scatter_particles2 = ax2.scatter([], [], color='purple', s=5, label='Particle Positions') """
     #line_particles = ax2.plot([], [], color='yellow', linestyle='-', linewidth=2, label='particle positions')
 
-    ax2.legend()
+    #ax2.legend()
 
 def main():
     plt.ion()
@@ -150,8 +150,8 @@ def save_data(signal, frame):
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-    data.to_csv(f'~/csvs/amcl_results_{timestamp}.csv', index=False)
-    data1.to_csv(f'~/csvs/particles_results_{timestamp}.csv', index=False)
+    data.to_csv(f'~/amcl_csv/amcl_results_{timestamp}.csv', index=False)
+    data1.to_csv(f'~/particle_csv/particles_results_{timestamp}.csv', index=False)
     
     sys.exit(0)
 
