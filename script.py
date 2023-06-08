@@ -139,13 +139,14 @@ ground_truth_avg_pos_y_np = np.array([pos[1] for pos in ground_truth_common_posi
 simulated_avg_pos_x_np = np.array([pos[0] for pos in simulated_common_positions])
 simulated_avg_pos_y_np = np.array([pos[1] for pos in simulated_common_positions])
 
+
 rmse_avg = np.sqrt((ground_truth_avg_pos_x_np - simulated_avg_pos_x_np[:len(ground_truth_avg_pos_x_np)]) ** 2 +
                    (ground_truth_avg_pos_y_np - simulated_avg_pos_y_np[:len(ground_truth_avg_pos_y_np)]) ** 2)
 
 rmse_avg_result =  np.empty(len(simulated_avg_pos_x_np))
 rmse_avg_result[:len(ground_truth_avg_pos_x_np)] = rmse_avg
 rmse_avg_result[len(ground_truth_avg_pos_x_np):] = rmse_avg[-1]
-print(rmse_avg)
+print("TAMANHO ", len(rmse_avg))
 
 # Read CSV files from folder1 and folder2 simultaneously
 for filename1, filename2 in zip(sorted(os.listdir(folder1)), sorted(os.listdir(folder2))):
@@ -187,12 +188,13 @@ x_values = range(1, len(rmse_avg) + 1)
 plt.plot(x_values, rmse_avg, marker='o')
 
 # Set labels and title
+plt.ylim(0,5)
 plt.xlabel('Total Time of Simulation (seconds)')
 plt.ylabel('RMSE')
 plt.title('RMSE vs. Total Time of Simulation')
 total_time = 83
 # Set x-axis ticks
-plt.xticks(x_values, [i * total_time / len(x_values) for i in x_values])
+#plt.xticks(x_values, [i * total_time / len(x_values) for i in x_values])
 
 # Display the plot
 plt.show()
