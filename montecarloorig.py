@@ -68,11 +68,13 @@ class ParticleFilter(object):
         self.laser_min_range = laser_min_range
             
         self.Q = np.zeros((90, 90))
-        np.fill_diagonal(self.Q, 50)
-        
-        self.denominador = np.sqrt(2*np.pi*np.linalg.det(self.Q)) #Fixo, logo metendo aqui assim acelera as contas
+        np.fill_diagonal(self.Q, 60)
+        self.sigma = 60
+        self.min_weight = [0,0]
+        self.denominador = np.sqrt(2*np.pi*(self.sigma)) #Fixo, logo metendo aqui assim acelera as contas
         self.Q = np.linalg.inv(self.Q) #Fixo, logo metendo aqui assim acelera as contas
-    
+                # Precompute trigonometric values
+        
         self.particles = []
 
     def conversao_metros(self, x, y):
@@ -93,7 +95,7 @@ class ParticleFilter(object):
         for i in self.indices:
             if i[0] > 310 and i[0] < 340 and i[1] > 310 and i[1] < 340:
                 indices_final.append(i)
-        indices_final = np.array(indices_final)
+        indices_final = np.array(self.indices)
         arraymap = indices_final.tolist()
         self.tamanho_livre = len(arraymap)
         x = np.random.choice(self.tamanho_livre, size=self.num_particles, replace=True)
@@ -103,7 +105,7 @@ class ParticleFilter(object):
     def init_particles(self):
         for i in self.position_particula:
             x, y = self.conversao_metros(i[1], i[0])
-            theta = np.random.uniform(np.pi*5/4, 7/4*np.pi)
+            theta = np.random.uniform(0, 2*np.pi)
 
             #x, y = self.conversao_metros(np.array(np.random.uniform(40, 80)), np.array(np.random.uniform(60, 100)))
             #theta = 0
@@ -140,6 +142,7 @@ class ParticleFilter(object):
                 for i in range(len(self.pesos_particula[0,:])):
                     N_eff_max += (self.pesos_particula[0,i]/weight_total)**2
                     self.pesos_particula[0,i] = 0;
+                self.min_weight[0] = 0;
                 N_eff_max = 1/N_eff_max
                 novas_particulas = np.clip(0, 0,np.floor(N_eff_max * 0.025).astype(int)) #Para mudar o segunda zero para self.num_particles quando quisermos kidnapping
                 if N_eff <= 0.3 * self.num_particles:
@@ -202,27 +205,31 @@ class ParticleFilter(object):
         
         diff_transpose = diff[:, np.newaxis]
         
-        numerador = np.exp(-0.5*np.linalg.multi_dot([diff, self.Q, diff_transpose]))
+        numerador = np.exp(-0.5*np.dot(diff, diff_transpose)*(1/self.sigma))
       
         particle.weight = (numerador[0] / self.denominador) * particle.weight
-
-        #short = np.where(diff < 0,exp , diff)
-        #max_range = np.where(diff > 3.5)
         
         a = np.where(self.pesos_particula[0,:] == 0)
-        for i in range(len(self.pesos_particula[0,:])):
-            if(np.size(a) == 0):
-                if(self.pesos_particula[0,i] < particle.weight):
-                    self.pesos_particula[0,i] = particle.weight
-                    self.pesos_particula[1,i] = particle.x
-                    self.pesos_particula[2,i] = particle.y
-                    self.pesos_particula[3,i] = particle.theta
-                    break;
-            else:
-                self.pesos_particula[0,a[0]] = particle.weight
-                self.pesos_particula[1,a[0]] = particle.x
-                self.pesos_particula[2,a[0]] = particle.y
-                self.pesos_particula[3,a[0]] = particle.theta
+        if(np.size(a) == 0):
+            if(self.min_weight[0] < particle.weight):
+                self.pesos_particula[0,self.min_weight[1]] = particle.weight
+                self.pesos_particula[1,self.min_weight[1]] = particle.x
+                self.pesos_particula[2,self.min_weight[1]] = particle.y
+                self.pesos_particula[3,self.min_weight[1]] = particle.theta
+                i = np.argmin(self.pesos_particula[0,:])
+                self.min_weight[0] = self.pesos_particula[0,i]
+                self.min_weight[1] = i
+        else:
+            if(self.min_weight[0] == 0):
+                self.min_weight[0] = particle.weight
+                self.min_weight[1] = a[0]
+            elif(self.min_weight[0] > particle.weight):
+                self.min_weight[0] = particle.weight
+                self.min_weight[1] = a[0]
+            self.pesos_particula[0,a[0]] = particle.weight
+            self.pesos_particula[1,a[0]] = particle.x
+            self.pesos_particula[2,a[0]] = particle.y
+            self.pesos_particula[3,a[0]] = particle.theta
     
     def convert_laser(self, scan, min_range, max_range):
         step = 4
@@ -232,20 +239,19 @@ class ParticleFilter(object):
 
     def raytracing(self, x, y, theta, max_range):
         ranges = []
-
-        # Precompute trigonometric values
         angles = np.arange(0, 360, 4)
-        phi_values = theta + np.radians(angles)
         # Vectorized calculations
-        r_values = np.arange(0, max_range, self.resolution)
+        r_values = np.arange(0, self.laser_max_range, self.resolution)
+        phi_values = theta + np.radians(angles)
         x_values = x + np.outer(r_values, np.cos(phi_values))
         y_values = y + np.outer(r_values, np.sin(phi_values))
-        row_values, col_values = self.conversao_pixeis(x_values, y_values)
 
+        row_values, col_values = self.conversao_pixeis(x_values, y_values)
+        
         # Find wall indices
         mask = (self.map[col_values, row_values] == 0) | (self.map[col_values, row_values] == 205)
         hit_indices = np.argmax(mask, axis=0)
-
+        
         for i, hit_index in enumerate(hit_indices):
             if hit_index > 0:
                 row = row_values[hit_index, i]
@@ -260,6 +266,7 @@ class ParticleFilter(object):
 
         ranges = np.array(ranges)
         #self.draw_line_until_dark_dot(x, y, ranges)
+        
         return ranges
     
     def resample(self, novas_particulas):
@@ -451,8 +458,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/piso5.pgm", byteorder='<')
-        with open('/home/tomas/catkin_ws/src/sintetic/maps/piso5.yaml', 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/lab.pgm", byteorder='<')
+        with open('/home/tomas/catkin_ws/src/sintetic/maps/lab.yaml', 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
         
