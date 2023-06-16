@@ -66,14 +66,10 @@ class ParticleFilter(object):
         self.laser_min_angle = laser_min_angle
         self.laser_max_range = laser_max_range
         self.laser_min_range = laser_min_range
-            
-        self.Q = np.zeros((90, 90))
-        np.fill_diagonal(self.Q, 60)
+        
         self.sigma = 60
         self.min_weight = [0,0]
-        self.denominador = np.sqrt(2*np.pi*(self.sigma)) #Fixo, logo metendo aqui assim acelera as contas
-        self.Q = np.linalg.inv(self.Q) #Fixo, logo metendo aqui assim acelera as contas
-                # Precompute trigonometric values
+        self.denominador = np.sqrt(2*np.pi*(self.sigma**90)) #Fixo, logo metendo aqui assim acelera as contas
         
         self.particles = []
 
@@ -93,9 +89,9 @@ class ParticleFilter(object):
         self.indices = np.argwhere(self.map == 254)
         indices_final = []
         for i in self.indices:
-            if i[0] > 310 and i[0] < 340 and i[1] > 310 and i[1] < 340:
+            if i[0] > 310 and i[0] < 370 and i[1] > 310 and i[1] < 340:
                 indices_final.append(i)
-        indices_final = np.array(self.indices)
+        indices_final = np.array(indices_final)
         arraymap = indices_final.tolist()
         self.tamanho_livre = len(arraymap)
         x = np.random.choice(self.tamanho_livre, size=self.num_particles, replace=True)
@@ -105,7 +101,7 @@ class ParticleFilter(object):
     def init_particles(self):
         for i in self.position_particula:
             x, y = self.conversao_metros(i[1], i[0])
-            theta = np.random.uniform(0, 2*np.pi)
+            theta = np.random.uniform(-np.pi, 0)
 
             #x, y = self.conversao_metros(np.array(np.random.uniform(40, 80)), np.array(np.random.uniform(60, 100)))
             #theta = 0
@@ -113,10 +109,10 @@ class ParticleFilter(object):
 
     def predict_particle_odometry(self, particle, v, omega, dt):
         if (v >= 0.001 or v <= -0.001 or omega >= 0.01 or omega <= -0.01):
-            particle.x = particle.x + v * np.cos(particle.theta) * dt + np.random.normal(0, 0.006)
-            particle.y = particle.y + v * np.sin(particle.theta) * dt + np.random.normal(0, 0.006)
-            particle.theta = particle.theta + omega * dt + np.random.normal(0, 0.003)
-    
+            particle.theta = particle.theta + (omega) * dt + np.random.normal(0, 0.003)
+            particle.x = particle.x + (v) * np.cos(particle.theta) * dt + np.random.normal(0, 0.006)
+            particle.y = particle.y + (v) * np.sin(particle.theta) * dt + np.random.normal(0, 0.006)
+            
     def update_particle(self, laser_scan, v, omega):
         """weight update, and resampling."""
         actual_ranges = self.convert_laser(laser_scan, self.laser_min_range, self.laser_max_range)
@@ -370,18 +366,27 @@ class MonteCarloLocalization(object):
                 for i in range(len(pesos_particulas[0,:])):
                     x += pesos_particulas[1,i]*pesos_particulas[0,i]
                     y += pesos_particulas[2,i]*pesos_particulas[0,i]
+                    while(pesos_particulas[3,i] > np.pi or pesos_particulas[3,i] < -np.pi):
+                        if pesos_particulas[3,i] > np.pi:
+                            pesos_particulas[3,i] -= 2*np.pi
+                        elif pesos_particulas[3,i] < -np.pi:
+                            pesos_particulas[3,i] += 2*np.pi
                     div += pesos_particulas[0,i]
-                    
+                sum_sin = sum(w * math.sin(angle) for w, angle in zip(pesos_particulas[0,:], pesos_particulas[3,:]))
+                sum_cos = sum(w * math.cos(angle) for w, angle in zip(pesos_particulas[0,:], pesos_particulas[3,:]))
+                theta = math.atan2(sum_sin, sum_cos)
                 x = x/div
                 y = y/div
+                qz = tf.transformations.quaternion_from_euler(0, 0, theta)[2]
+                qw = tf.transformations.quaternion_from_euler(0, 0, theta)[3]
                 marker = Marker()
                 marker.action = Marker.ADD
                 marker.type = Marker.SPHERE
                 marker.id = 1
                 marker.pose.position.x = x
                 marker.pose.position.y = y
-                marker.pose.orientation.w = 0.21710630958601523
-                marker.pose.orientation.z = 0.9761479653914878
+                marker.pose.orientation.w = qw
+                marker.pose.orientation.z = qz
                 marker.color.a = 0.5
                 marker.color.r = 1.0
                 marker.color.g = 0.0
@@ -458,8 +463,8 @@ class MonteCarloLocalization(object):
                                 ).reshape((int(self.height), int(self.width)))
 
     def inicialization(self):
-        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/lab.pgm", byteorder='<')
-        with open('/home/tomas/catkin_ws/src/sintetic/maps/lab.yaml', 'r') as file:
+        map = self.read_pgm("/home/tomas/catkin_ws/src/sintetic/maps/piso5.pgm", byteorder='<')
+        with open('/home/tomas/catkin_ws/src/sintetic/maps/piso5.yaml', 'r') as file:
             # Load the YAML contents
             yaml_data = yaml.safe_load(file)
         
@@ -478,14 +483,14 @@ class MonteCarloLocalization(object):
         return map, resolution, origin
 
     def run(self):
-        rate = rospy.Rate(10)
+        rate = rospy.Rate(4.7)
         while not rospy.is_shutdown():
             self.laser_scan_update()
             self.publish()
             rate.sleep()
 
 if __name__ == '__main__':
-    num_particles = 800
+    num_particles = 1000
     
     mcl = MonteCarloLocalization(num_particles)
 
