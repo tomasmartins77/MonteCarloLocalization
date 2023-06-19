@@ -1,13 +1,10 @@
 <launch>
-    
     <param name="use_sim_time" value="true"/>
-    <node name="map_server" pkg="map_server" type="map_server" args="/home/rods/gmapping_01.yaml" />
-    <!-- <node name="map_server" pkg="map_server" type="map_server" args="/home/rods/quadrado.yaml" /> -->
     <node pkg="tf2_ros" type="static_transform_publisher" name="" args="0 0 0 0 0 0 1 base_footprint base_link" />
-    <node pkg="tf2_ros" type="static_transform_publisher" name="" args="0 0 0 0 0 0 1 base_link base_scan" />
-    <node pkg="tf2_ros" type="static_transform_publisher" name="" args="0 0 0 0 0 0 1 base_link map" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="" args="0 0 0 0 0 0 1 base_link base_scan" /> 
+    
 
-    <!-- <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen">
+    <node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen">
       <param name="map_update_interval" value="5.0"/>
       <param name="maxUrange" value="16.0"/>
       <param name="sigma" value="0.05"/>
@@ -35,6 +32,6 @@
       <param name="llsamplerange" value="0.01"/>
       <param name="llsamplestep" value="0.01"/>
       <param name="lasamplerange" value="0.005"/>
-      <param name="lasamplestep" value="0.005"/>
-    </node> -->
+      <param name="lasamplestep" value="0.005"/> 
+    </node>
 </launch>

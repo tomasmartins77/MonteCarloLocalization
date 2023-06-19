@@ -1,0 +1,7 @@
+<launch>
+     <!-- <node name="map_server" pkg="map_server" type="map_server" args="/home/tomas/catkin_ws/src/sintetic/maps/piso51.yaml" /> -->
+     <node name="map_server" pkg="map_server" type="map_server" args="/home/tomas/catkin_ws/src/sintetic/maps/piso51.yaml" />
+     <node pkg="tf2_ros" type="static_transform_publisher" name="" args="0 0 0 0 0 0 1 base_footprint base_link" />
+     <node pkg="tf2_ros" type="static_transform_publisher" name="" args="0 0 0 0 0 0 1 base_link base_scan" /> 
+     <node pkg="tf2_ros" type="static_transform_publisher" name="" args="-0.05 -0.05 0 0 0 0 1 base_link map" />
+</launch>
